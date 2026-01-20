@@ -139,7 +139,7 @@ export class Forwarder {
     // Some servers return null or omit id on error responses
     if (originalId !== null && originalId !== undefined) {
       if (data.id === null || data.id === undefined) {
-        data = { ...data, id: originalId as string | number };
+        data = { ...data, id: originalId };
       }
     }
 
