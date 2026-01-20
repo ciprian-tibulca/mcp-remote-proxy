@@ -108,15 +108,18 @@ export class TokenManager {
     const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
 
     try {
+      // Build request body - only grant_type and optional scope
       const body = new URLSearchParams({
         grant_type: 'client_credentials',
-        client_id: this.clientId,
-        client_secret: this.clientSecret,
       });
 
       if (this.scope) {
         body.append('scope', this.scope);
       }
+
+      // Use HTTP Basic Authentication for client credentials
+      // This is the standard OAuth2 approach used by many providers
+      const credentials = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
 
       logger.debug('Fetching token from OAuth2 endpoint', { url: this.tokenUrl });
 
@@ -125,6 +128,7 @@ export class TokenManager {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
           Accept: 'application/json',
+          Authorization: `Basic ${credentials}`,
         },
         body: body.toString(),
         signal: controller.signal,

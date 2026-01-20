@@ -12,6 +12,9 @@ export class Forwarder {
   private readonly remoteUrl: string;
   private readonly tokenManager: TokenManager;
   private readonly timeoutMs: number;
+  
+  // Session ID returned by the server after initialize
+  private sessionId: string | null = null;
 
   constructor(options: {
     remoteUrl: string;
@@ -111,15 +114,95 @@ export class Forwarder {
       throw new RemoteError('No response received from remote server', 0);
     }
 
-    // Parse and return the response
-    const data = (await response.json()) as JsonRpcResponse;
+    // Get the original request id to ensure it's preserved in responses
+    const originalId = 'id' in message ? message.id : null;
+
+    // Check content type to determine how to parse
+    const contentType = response.headers.get('content-type') || '';
+    
+    let data: JsonRpcResponse;
+    
+    if (contentType.includes('text/event-stream')) {
+      // Parse SSE response
+      data = await this.parseSSEResponse(response);
+    } else {
+      // Parse as JSON
+      data = (await response.json()) as JsonRpcResponse;
+    }
     
     // Validate it's a valid JSON-RPC response
     if (!data.jsonrpc || data.jsonrpc !== '2.0') {
       throw new RemoteError('Invalid JSON-RPC response from remote server', 0);
     }
 
+    // Ensure the response has the correct id from the original request
+    // Some servers return null or omit id on error responses
+    if (originalId !== null && originalId !== undefined) {
+      if (data.id === null || data.id === undefined) {
+        data = { ...data, id: originalId as string | number };
+      }
+    }
+
     return data;
+  }
+
+  /**
+   * Parse a Server-Sent Events response to extract JSON-RPC data
+   * SSE format: 
+   *   event: message
+   *   data: {"jsonrpc": "2.0", ...}
+   */
+  private async parseSSEResponse(response: Response): Promise<JsonRpcResponse> {
+    const text = await response.text();
+    logger.debug('Parsing SSE response', { length: text.length });
+    
+    // Split into lines and find the data lines
+    const lines = text.split('\n');
+    const dataLines: string[] = [];
+    
+    for (const line of lines) {
+      if (line.startsWith('data:')) {
+        // Extract the data after "data:" (may have a space after colon)
+        const data = line.slice(5).trim();
+        if (data) {
+          dataLines.push(data);
+        }
+      }
+    }
+    
+    if (dataLines.length === 0) {
+      throw new RemoteError('No data found in SSE response', 0);
+    }
+    
+    // For MCP, we expect a single JSON-RPC response in the data
+    // Multiple data lines might be continuation of the same JSON
+    const jsonData = dataLines.join('');
+    
+    try {
+      return JSON.parse(jsonData) as JsonRpcResponse;
+    } catch (error) {
+      logger.error('Failed to parse SSE data as JSON', { data: jsonData.slice(0, 200) });
+      throw new RemoteError(
+        `Failed to parse SSE response as JSON: ${error instanceof Error ? error.message : String(error)}`,
+        0
+      );
+    }
+  }
+
+  /**
+   * Normalize a message to ensure it has all required fields for the remote server.
+   * Some servers require 'params' even when empty.
+   */
+  private normalizeMessage(message: JsonRpcMessage): JsonRpcMessage {
+    // If it's a request or notification (has method), ensure params exists
+    if ('method' in message) {
+      const normalized = { ...message };
+      if (!('params' in normalized) || normalized.params === undefined) {
+        (normalized as Record<string, unknown>).params = {};
+      }
+      return normalized as JsonRpcMessage;
+    }
+    return message;
   }
 
   /**
@@ -136,21 +219,48 @@ export class Forwarder {
 
     try {
       const method = 'method' in message ? message.method : 'unknown';
+      
+      // Normalize message to ensure params field exists
+      const normalizedMessage = this.normalizeMessage(message);
+      const requestBody = JSON.stringify(normalizedMessage);
+      
+      // Build headers, including session ID if we have one
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+        Authorization: `Bearer ${token}`,
+      };
+      
+      if (this.sessionId) {
+        headers['Mcp-Session-Id'] = this.sessionId;
+      }
+
       logger.debug('Forwarding to remote', { 
         url: this.remoteUrl, 
         method,
-        hasId: 'id' in message 
+        hasId: 'id' in message,
+        hasSessionId: !!this.sessionId,
+        body: requestBody,
       });
 
       const response = await fetch(this.remoteUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(message),
+        headers,
+        body: requestBody,
         signal: controller.signal,
+      });
+
+      // Capture session ID from response headers if present
+      const newSessionId = response.headers.get('Mcp-Session-Id');
+      if (newSessionId && newSessionId !== this.sessionId) {
+        logger.debug('Received new session ID from server', { sessionId: newSessionId });
+        this.sessionId = newSessionId;
+      }
+
+      logger.debug('Remote response', {
+        status: response.status,
+        contentType: response.headers.get('content-type'),
+        sessionId: newSessionId,
       });
 
       // Check for auth errors
@@ -163,9 +273,30 @@ export class Forwarder {
         );
       }
 
-      // Check for other HTTP errors
+      // Check for other HTTP errors - but try to extract JSON-RPC error if present
       if (!response.ok) {
         const body = await response.text();
+        
+        // Try to parse as JSON-RPC error response
+        try {
+          const jsonBody = JSON.parse(body) as { jsonrpc?: string; error?: unknown };
+          if (jsonBody.jsonrpc === '2.0' && jsonBody.error) {
+            // This is a valid JSON-RPC error response, let it pass through
+            // by returning the response for parsing
+            logger.debug('Received JSON-RPC error response from remote', { 
+              status: response.status,
+              error: jsonBody.error 
+            });
+            // Create a fake response with the body for parsing
+            return new Response(body, {
+              status: 200, // Treat as success for response parsing
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+        } catch {
+          // Not valid JSON, fall through to throw RemoteError
+        }
+        
         throw new RemoteError(
           `Remote server error: ${response.status} ${response.statusText}: ${body}`,
           response.status

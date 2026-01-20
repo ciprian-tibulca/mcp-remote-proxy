@@ -62,16 +62,20 @@ describe('TokenManager', () => {
 
       expect(token).toBe('new-token-123');
       expect(mockFetch).toHaveBeenCalledTimes(1);
-      expect(mockFetch).toHaveBeenCalledWith(
-        'https://auth.example.com/oauth/token',
-        expect.objectContaining({
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            Accept: 'application/json',
-          },
-        })
-      );
+      
+      // Verify Basic Auth header is used
+      const callArgs = mockFetch.mock.calls[0];
+      const requestInit = callArgs[1] as RequestInit;
+      const headers = requestInit.headers as Record<string, string>;
+      
+      expect(headers['Content-Type']).toBe('application/x-www-form-urlencoded');
+      expect(headers['Accept']).toBe('application/json');
+      expect(headers['Authorization']).toMatch(/^Basic /);
+      
+      // Verify Basic Auth contains correct credentials
+      const basicAuth = headers['Authorization'].replace('Basic ', '');
+      const decoded = Buffer.from(basicAuth, 'base64').toString('utf-8');
+      expect(decoded).toBe('test-client:test-secret');
     });
 
     it('should use cached token on subsequent calls', async () => {
@@ -96,7 +100,7 @@ describe('TokenManager', () => {
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
-    it('should include scope in token request when provided', async () => {
+    it('should include scope in token request and use Basic Auth', async () => {
       mockFetch.mockResolvedValueOnce(
         createMockResponse({
           ok: true,
@@ -112,10 +116,16 @@ describe('TokenManager', () => {
       const callArgs = mockFetch.mock.calls[0];
       const requestInit = callArgs[1] as RequestInit;
       const body = requestInit.body as string;
+      const headers = requestInit.headers as Record<string, string>;
+      
+      // Scope should be in the body
       expect(body).toContain('scope=read+write');
       expect(body).toContain('grant_type=client_credentials');
-      expect(body).toContain('client_id=test-client');
-      expect(body).toContain('client_secret=test-secret');
+      
+      // Credentials should be in Authorization header (Basic Auth), not in body
+      expect(body).not.toContain('client_id');
+      expect(body).not.toContain('client_secret');
+      expect(headers['Authorization']).toMatch(/^Basic /);
     });
 
     it('should throw TokenError on failed token request', async () => {
