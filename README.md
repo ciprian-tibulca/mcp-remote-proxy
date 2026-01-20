@@ -24,13 +24,13 @@ npm install -g mcp-remote-proxy
 ### Via npx from GitHub
 
 ```bash
-npx github:your-username/mcp-remote-proxy --remote-url https://api.example.com/mcp ...
+npx github:ciprian-tibulca/mcp-remote-proxy --remote-url https://api.example.com/mcp ...
 ```
 
 ### From source
 
 ```bash
-git clone https://github.com/your-username/mcp-remote-proxy.git
+git clone https://github.com/ciprian-tibulca/mcp-remote-proxy.git
 cd mcp-remote-proxy
 npm install
 npm run build
@@ -89,7 +89,7 @@ Add this to your Cursor MCP configuration file (`~/.cursor/mcp.json` or workspac
     "my-remote-server": {
       "command": "npx",
       "args": [
-        "github:your-username/mcp-remote-proxy",
+        "github:ciprian-tibulca/mcp-remote-proxy",
         "--remote-url", "https://api.example.com/mcp",
         "--token-url", "https://auth.example.com/oauth/token",
         "--client-id", "your-client-id",
@@ -108,7 +108,7 @@ Add this to your Cursor MCP configuration file (`~/.cursor/mcp.json` or workspac
   "mcpServers": {
     "my-remote-server": {
       "command": "npx",
-      "args": ["github:your-username/mcp-remote-proxy"],
+      "args": ["github:ciprian-tibulca/mcp-remote-proxy"],
       "env": {
         "MCP_REMOTE_URL": "https://api.example.com/mcp",
         "MCP_TOKEN_URL": "https://auth.example.com/oauth/token",
@@ -195,7 +195,7 @@ Add this to your Cursor MCP configuration file (`~/.cursor/mcp.json` or workspac
 ### Setup
 
 ```bash
-git clone https://github.com/your-username/mcp-remote-proxy.git
+git clone https://github.com/ciprian-tibulca/mcp-remote-proxy.git
 cd mcp-remote-proxy
 npm install
 ```
