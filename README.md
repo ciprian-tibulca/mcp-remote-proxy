@@ -1,4 +1,4 @@
-# mcp-remote-proxy
+# mcp-remote-proxy 
 
 A lightweight MCP (Model Context Protocol) stdio proxy that forwards requests to a remote MCP HTTP server with OAuth2 client credentials authentication.
 
